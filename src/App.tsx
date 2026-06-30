@@ -156,7 +156,7 @@ function App() {
   const handleDeletePage = useCallback((year: number, month: number) => {
     const remaining = localEvents.filter(e => {
       const d = e.date;
-      return !(d.startsWith(`${year}-${String(month).padStart(2, '0')}`)));
+      return !(d.startsWith(`${year}-${String(month).padStart(2, '0')}`));
     });
     setLocalEvents(remaining);
     lsSave(remaining);

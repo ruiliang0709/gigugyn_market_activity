@@ -2,17 +2,15 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   CalendarDays, Download, Upload, Save, RotateCcw,
-  Trash2, FileX, Sparkles
+  Trash2, FileX
 } from 'lucide-react';
-import type { MarketEvent, MeetingLink, ExtractedScheduleInfo } from '@/types';
+import type { MarketEvent, MeetingLink } from '@/types';
 import { SCALE_CONFIG } from '@/types';
 import EventModal from '@/components/EventModal';
 import ImportModal from '@/components/ImportModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import DayEventsSheet from '@/components/DayEventsSheet';
 import MobileEventList from '@/components/MobileEventList';
-import AIChatPanel from '@/components/AIChatPanel';
-import { useAIChat } from '@/hooks/useAIChat';
 
 interface CalendarSectionProps {
   events: MarketEvent[];
@@ -23,8 +21,6 @@ interface CalendarSectionProps {
   onDeletePage: (year: number, month: number) => void;
   onDeleteAll: () => void;
   onUpdateLinks: (eventId: string, links: MeetingLink[]) => void;
-  onUpdateAIResult: (eventId: string, newLinks: MeetingLink[], newSpeakers: string[], extractedInfo: ExtractedScheduleInfo, scheduleImage?: string) => void;
-  onClearAIResult: (eventId: string) => void;
   hasChanges: boolean;
 }
 
@@ -49,7 +45,7 @@ type DeleteTarget = 'page' | 'all' | null;
 
 export default function CalendarSection({
   events, savedEvents, onImport, onSave, onDiscard,
-  onDeletePage, onDeleteAll, onUpdateLinks, onUpdateAIResult, onClearAIResult, hasChanges
+  onDeletePage, onDeleteAll, onUpdateLinks, hasChanges
 }: CalendarSectionProps) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -61,7 +57,6 @@ export default function CalendarSection({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [sheetDay, setSheetDay] = useState<{ date: string; events: MarketEvent[] } | null>(null);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
-  const [showAI, setShowAI] = useState(false);
 
   // Sync selectedEvent when events prop updates (e.g. after AI result is deleted)
   useEffect(() => {
@@ -74,16 +69,6 @@ export default function CalendarSection({
   }, [events]);
 
   // ---- AI Chat ----
-  const {
-    messages: aiMessages,
-    isStreaming: aiIsStreaming,
-    inputValue: aiInputValue,
-    setInputValue: setAiInputValue,
-    sendMessage: sendAiMessage,
-    stopStreaming: stopAiStreaming,
-    clearMessages: clearAiMessages,
-  } = useAIChat();
-
   // ---- Filtered by tumor + scale ----
   const filteredEvents = useMemo(() => {
     if (filterTumor === '全部' && filterScale === '全部') return events;
@@ -325,37 +310,13 @@ export default function CalendarSection({
 
       {/* Overlays */}
       {sheetDay && <DayEventsSheet date={sheetDay.date} events={sheetDay.events} onSelectEvent={setSelectedEvent} onClose={() => setSheetDay(null)} />}
-      {selectedEvent && <EventModal event={selectedEvent} onClose={() => setSelectedEvent(null)} onUpdateLinks={onUpdateLinks} onUpdateAIResult={onUpdateAIResult} onClearAIResult={onClearAIResult} />}
+      {selectedEvent && <EventModal event={selectedEvent} onClose={() => setSelectedEvent(null)} onUpdateLinks={onUpdateLinks} />}
       {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={(evts) => { setShowImport(false); onImport(evts); }} existingEvents={events} />}
       {deleteTarget === 'page' && <ConfirmModal title="删除本页数据" message={`确定要删除 ${year}年${MONTH_NAMES[month - 1]} 的所有活动数据吗？共 ${currentMonthCount} 场活动。`} confirmText="确认删除" onConfirm={confirmDeletePage} onCancel={() => setDeleteTarget(null)} />}
       {deleteTarget === 'all' && <ConfirmModal title="删除所有数据" message={`确定要删除全部 ${savedEvents.length} 条活动数据吗？`} confirmText="确认删除全部" onConfirm={confirmDeleteAll} onCancel={() => setDeleteTarget(null)} />}
 
       {/* AI Assistant */}
       {!showAI && events.length > 0 && (
-        <button
-          onClick={() => setShowAI(true)}
-          className="fixed bottom-5 right-5 z-40 w-12 h-12 rounded-xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95"
-          style={{
-            background: "linear-gradient(135deg, #003A70, #007A80)",
-            boxShadow: "0 4px 16px rgba(0,58,112,0.3)",
-          }}
-          title="AI 智能助手"
-        >
-          <Sparkles className="w-5 h-5 text-white" />
-        </button>
-      )}
-      {showAI && (
-        <AIChatPanel
-          isOpen={showAI}
-          onClose={() => setShowAI(false)}
-          messages={aiMessages}
-          isStreaming={aiIsStreaming}
-          inputValue={aiInputValue}
-          onInputChange={setAiInputValue}
-          onSend={sendAiMessage}
-          onStop={stopAiStreaming}
-          onClear={clearAiMessages}
-        />
       )}
     </div>
   );

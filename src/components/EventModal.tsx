@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   X, MapPin, Users, Calendar, Stethoscope, Sparkles, User, Wallet, Tag, FileText,
-  Link as LinkIcon, ExternalLink, Plus, Bot, Loader2, ChevronDown, ChevronUp,
-  Crown, Mic, StickyNote, ImageIcon, Trash2
+  Link as LinkIcon, ExternalLink, Plus, ChevronDown, ChevronUp,
+  Trash2
 } from 'lucide-react';
 import type { MarketEvent, MeetingLink, ExtractedScheduleInfo } from '@/types';
 import { SCALE_CONFIG, TUMOR_COLORS } from '@/types';
@@ -11,13 +11,9 @@ interface EventModalProps {
   event: MarketEvent;
   onClose: () => void;
   onUpdateLinks: (eventId: string, links: MeetingLink[]) => void;
-  onUpdateAIResult?: (eventId: string, newLinks: MeetingLink[], newSpeakers: string[], extractedInfo: ExtractedScheduleInfo, scheduleImage?: string) => void;
-  onClearAIResult?: (eventId: string) => void;
 }
 
-type TabKey = 'info' | 'schedule';
-
-export default function EventModal({ event, onClose, onUpdateLinks, onUpdateAIResult, onClearAIResult }: EventModalProps) {
+export default function EventModal({ event, onClose, onUpdateLinks }: EventModalProps) {
   const scaleConfig = SCALE_CONFIG[event.scale];
   const tumorColor = TUMOR_COLORS[event.tumorType];
 
@@ -26,19 +22,6 @@ export default function EventModal({ event, onClose, onUpdateLinks, onUpdateAIRe
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newUrl, setNewUrl] = useState('');
-
-  // ---- Schedule / AI state ----
-  const [activeTab, setActiveTab] = useState<TabKey>('info');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<{
-    chairmen: string[];
-    speakers: string[];
-    notes: string;
-  } | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
 
   // ---- Lightbox for enlarged image view ----
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -74,147 +57,7 @@ export default function EventModal({ event, onClose, onUpdateLinks, onUpdateAIRe
     onUpdateLinks(event.id, updated);
   };
 
-  // ---- Image upload: compress via Canvas to keep base64 small (< 500KB) ----
-  const processImage = useCallback((file: File) => {
-    setAnalysisError(null);
-    setAnalysisResult(null);
 
-    if (!file.type.startsWith('image/')) {
-      setAnalysisError('请上传图片文件（JPG / PNG / GIF）');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setAnalysisError('图片大小不能超过 10MB');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      if (!dataUrl) { setAnalysisError('图片读取失败'); return; }
-
-      const img = new Image();
-      img.onload = () => {
-        // Strategy: original image if small, high-quality compression if large
-        const ORIGINAL_LIMIT = 3 * 1024 * 1024; // 3MB base64 threshold
-        if (dataUrl.length < ORIGINAL_LIMIT && (file.type === 'image/jpeg' || file.type === 'image/jpg')) {
-          // Small JPEG: use original, no compression at all
-          console.log(`[processImage] Original ${Math.round(dataUrl.length / 1024)}KB — no compression`);
-          setPreviewUrl(dataUrl);
-          setImageBase64(dataUrl);
-          return;
-        }
-
-        // Large image or PNG: high-quality compression while preserving text/QR readability
-        const MAX_W = 2600;
-        const MAX_H = 4000;
-        let { width, height } = img;
-        if (width > MAX_W) { height = Math.round(height * MAX_W / width); width = MAX_W; }
-        if (height > MAX_H) { width = Math.round(width * MAX_H / height); height = MAX_H; }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { setAnalysisError('图片处理失败'); return; }
-
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, width, height);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Start at 0.97, only reduce if exceeds 4MB base64
-        let quality = 0.97;
-        let compressed = canvas.toDataURL('image/jpeg', quality);
-        while (compressed.length > 4 * 1024 * 1024 && quality > 0.70) {
-          quality -= 0.02;
-          compressed = canvas.toDataURL('image/jpeg', quality);
-        }
-        console.log(`[processImage] ${Math.round(dataUrl.length / 1024)}KB → ${Math.round(compressed.length / 1024)}KB (q=${quality.toFixed(2)})`);
-        setPreviewUrl(compressed);
-        setImageBase64(compressed);
-      };
-      img.onerror = () => setAnalysisError('图片格式不支持');
-      img.src = dataUrl;
-    };
-    reader.onerror = () => setAnalysisError('图片读取失败');
-    reader.readAsDataURL(file);
-  }, []);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) processImage(file);
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processImage(file);
-  };
-
-  // ---- AI Analysis ----
-  const handleAnalyze = useCallback(async () => {
-    if (!imageBase64) return;
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-    try {
-      const response = await fetch('/api/vision/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64 }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `请求失败 (${response.status})`);
-      }
-
-      const result = await response.json() as {
-        chairmen: string[];
-        speakers: string[];
-        notes: string;
-        error?: string;
-      };
-
-      if (result.error) throw new Error(result.error);
-      setAnalysisResult(result);
-
-      if (onUpdateAIResult) {
-        const aiSpeakers = [...result.chairmen, ...result.speakers];
-
-        const extractedInfo: ExtractedScheduleInfo = {
-          chairmen: result.chairmen,
-          speakers: result.speakers,
-          topics: [],
-          links: [],
-          qrCodes: [],
-          schedule: '',
-          notes: result.notes || '',
-        };
-
-        // Pass imageBase64 so it gets saved as scheduleImage
-        onUpdateAIResult(event.id, [], aiSpeakers, extractedInfo, imageBase64);
-      }
-    } catch (err: any) {
-      setAnalysisError(err.message || 'AI 识别服务暂时不可用，请稍后重试');
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [imageBase64, event.id, onUpdateAIResult]);
-
-  const handleClear = useCallback(() => {
-    setPreviewUrl(null);
-    setImageBase64(null);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-  }, []);
-
-  const handleDeleteAIResult = useCallback(() => {
-    if (onClearAIResult) onClearAIResult(event.id);
-    handleClear();
-  }, [onClearAIResult, event.id, handleClear]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,37,59,0.35)', backdropFilter: 'blur(12px)' }} onClick={onClose}>
@@ -238,30 +81,11 @@ export default function EventModal({ event, onClose, onUpdateLinks, onUpdateAIRe
             <h3 className="text-lg font-bold leading-snug pr-8" style={{ color: '#0F253B' }}>{event.title}</h3>
           </div>
 
-          {/* Tabs */}
-          <div className="flex border-b" style={{ borderColor: '#D9D9D6' }}>
-            <button
-              onClick={() => setActiveTab('info')}
-              className="flex-1 py-2.5 text-xs font-bold text-center transition-colors"
-              style={{ color: activeTab === 'info' ? '#0F253B' : '#96A3AD', borderBottom: activeTab === 'info' ? '2px solid #0F253B' : '2px solid transparent' }}
-            >活动信息</button>
-            <button
-              onClick={() => setActiveTab('schedule')}
-              className="flex-1 py-2.5 text-xs font-bold text-center transition-colors relative"
-              style={{ color: activeTab === 'schedule' ? '#0F253B' : '#96A3AD', borderBottom: activeTab === 'schedule' ? '2px solid #0F253B' : '2px solid transparent' }}
-            >
-              <span className="inline-flex items-center gap-1">
-                <Bot className="w-3 h-3" />
-                AI 识图
-                {event.extractedInfo && <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#007A80' }} />}
-              </span>
-            </button>
-          </div>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto min-h-0">
-          {activeTab === 'info' ? (
+          {
             <div className="px-6 py-5 space-y-4">
               {/* Info grid */}
               <div className="grid grid-cols-2 gap-3">
@@ -383,173 +207,6 @@ export default function EventModal({ event, onClose, onUpdateLinks, onUpdateAIRe
                 </>
               )}
             </div>
-          ) : (
-            /* ===== AI VISION TAB ===== */
-            <div className="px-6 py-5 space-y-4">
-              {/* === CASE A: Has saved AI result in DB === */}
-              {event.extractedInfo ? (
-                <div className="space-y-4">
-                  {/* Header with delete button */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #003A70, #007A80)' }}>
-                        <Sparkles className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-xs font-bold" style={{ color: '#0F253B' }}>已识别的日程信息</span>
-                    </div>
-                    <button
-                      onClick={handleDeleteAIResult}
-                      className="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold inline-flex items-center gap-1"
-                      style={{ background: 'rgba(214,43,30,0.08)', color: '#D62B1E', border: '1px solid rgba(214,43,30,0.2)' }}
-                    >
-                      <Trash2 className="w-3 h-3" /> 删除识别结果
-                    </button>
-                  </div>
-
-                  {/* Saved chairmen */}
-                  {event.extractedInfo.chairmen.length > 0 && (
-                    <SavedSection icon={Crown} title={`主席 / 主持 (${event.extractedInfo.chairmen.length})`} color="#EB7500">
-                      <div className="flex flex-wrap gap-1.5">
-                        {event.extractedInfo.chairmen.map((name, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(235,117,0,0.08)', color: '#EB7500' }}>{name}</span>
-                        ))}
-                      </div>
-                    </SavedSection>
-                  )}
-
-                  {/* Saved speakers */}
-                  {event.extractedInfo.speakers.length > 0 && (
-                    <SavedSection icon={Mic} title={`讲者 (${event.extractedInfo.speakers.length})`} color="#003A70">
-                      <div className="flex flex-wrap gap-1.5">
-                        {event.extractedInfo.speakers.map((name, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(0,58,112,0.08)', color: '#003A70' }}>{name}</span>
-                        ))}
-                      </div>
-                    </SavedSection>
-                  )}
-
-                  {/* Saved notes — AI meeting content analysis */}
-                  {event.extractedInfo.notes && (
-                    <SavedSection icon={StickyNote} title="会议内容分析" color="#007A80">
-                      <p className="text-xs leading-relaxed" style={{ color: '#28334A' }}>{event.extractedInfo.notes}</p>
-                    </SavedSection>
-                  )}
-
-                  <button onClick={handleClear} className="w-full py-2.5 rounded-xl text-xs font-bold" style={{ background: '#F5F5F3', color: '#28334A', border: '1px solid #D9D9D6' }}>重新上传图片识别</button>
-                </div>
-
-              /* === CASE B: Current session has fresh analysis result === */
-              ) : analysisResult ? (
-                <div className="space-y-3">
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #003A70, #007A80)' }}>
-                        <Sparkles className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-xs font-bold" style={{ color: '#0F253B' }}>AI 识别结果</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={handleDeleteAIResult} className="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold inline-flex items-center gap-1" style={{ background: 'rgba(214,43,30,0.08)', color: '#D62B1E', border: '1px solid rgba(214,43,30,0.2)' }}>
-                        <Trash2 className="w-3 h-3" /> 删除识别结果
-                      </button>
-                      <button onClick={handleClear} className="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold" style={{ background: '#F5F5F3', color: '#28334A', border: '1px solid #D9D9D6' }}>重新上传</button>
-                    </div>
-                  </div>
-
-                  {/* Preview thumbnail */}
-                  {previewUrl && (
-                    <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #D9D9D6' }}>
-                      <img src={previewUrl} alt="原始图片" className="w-full max-h-[120px] object-contain" style={{ background: '#F5F5F3' }} />
-                    </div>
-                  )}
-
-                  {/* Chairmen */}
-                  {analysisResult.chairmen.length > 0 && (
-                    <SectionBlock icon={Crown} title={`主席 / 主持 (${analysisResult.chairmen.length})`} color="#EB7500">
-                      <div className="flex flex-wrap gap-1.5">
-                        {analysisResult.chairmen.map((name, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(235,117,0,0.08)', color: '#EB7500' }}>{name}</span>
-                        ))}
-                      </div>
-                    </SectionBlock>
-                  )}
-
-                  {/* Speakers */}
-                  {analysisResult.speakers.length > 0 && (
-                    <SectionBlock icon={Mic} title={`讲者 (${analysisResult.speakers.length})`} color="#003A70">
-                      <div className="flex flex-wrap gap-1.5">
-                        {analysisResult.speakers.map((name, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(0,58,112,0.08)', color: '#003A70' }}>{name}</span>
-                        ))}
-                      </div>
-                    </SectionBlock>
-                  )}
-
-                  {/* Notes — AI meeting content analysis */}
-                  {analysisResult.notes && (
-                    <SectionBlock icon={StickyNote} title="会议内容分析" color="#007A80">
-                      <p className="text-xs leading-relaxed" style={{ color: '#28334A' }}>{analysisResult.notes}</p>
-                    </SectionBlock>
-                  )}
-                </div>
-
-              /* === CASE C: No result yet — show upload area === */
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #003A70, #007A80)' }}>
-                      <Sparkles className="w-3 h-3 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold" style={{ color: '#0F253B' }}>AI 智能识图</p>
-                      <p className="text-[10px]" style={{ color: '#96A3AD' }}>上传会议日程图片，自动提取专家、链接</p>
-                    </div>
-                  </div>
-
-                  {!previewUrl ? (
-                    <label
-                      onDrop={handleDrop}
-                      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                      onDragLeave={() => setDragOver(false)}
-                      className="cursor-pointer border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center transition-all block"
-                      style={{ borderColor: dragOver ? '#003A70' : '#D9D9D6', backgroundColor: dragOver ? 'rgba(0,58,112,0.02)' : 'transparent', minHeight: '180px' }}
-                    >
-                      <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-3 transition-all" style={{ background: dragOver ? 'rgba(0,58,112,0.08)' : '#F5F5F3', color: dragOver ? '#003A70' : '#96A3AD' }}>
-                        <ImageIcon className="w-5 h-5" />
-                      </div>
-                      <p className="text-xs font-bold" style={{ color: '#0F253B' }}>点击或拖拽图片到此处</p>
-                      <p className="text-[10px] mt-1" style={{ color: '#96A3AD' }}>支持 JPG / PNG / GIF，最大 10MB</p>
-                      <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
-                    </label>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="relative rounded-xl overflow-hidden" style={{ border: '1px solid #D9D9D6' }}>
-                        <img src={previewUrl} alt="上传的日程" className="w-full max-h-[300px] object-contain" style={{ background: '#F5F5F3' }} />
-                        <button onClick={handleClear} className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center" style={{ background: 'rgba(15,37,59,0.6)', color: '#fff' }}>
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                      {analysisError && <div className="p-2.5 rounded-lg text-xs" style={{ background: 'rgba(214,43,30,0.06)', color: '#D62B1E' }}>{analysisError}</div>}
-                      <button onClick={handleAnalyze} disabled={isAnalyzing} className="w-full py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 inline-flex items-center justify-center gap-2" style={{ background: isAnalyzing ? '#D9D9D6' : 'linear-gradient(135deg, #003A70, #007A80)', color: '#fff' }}>
-                        {isAnalyzing ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> AI 识别中...</> : <><Sparkles className="w-3.5 h-3.5" /> 开始 AI 识别</>}
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="p-3 rounded-lg space-y-1.5" style={{ background: '#F5F5F3' }}>
-                    <p className="text-[10px] font-bold" style={{ color: '#96A3AD' }}>AI 将自动提取：</p>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1">
-                      {['主席/主持', '讲者名单', '会议内容分析'].map(tip => (
-                        <span key={tip} className="text-[10px] inline-flex items-center gap-1" style={{ color: '#28334A' }}>
-                          <span className="w-1 h-1 rounded-full" style={{ background: '#007A80' }} />{tip}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
           )}
         </div>
       </div>
@@ -618,23 +275,4 @@ function SectionBlock({ icon: Icon, title, color, children }: {
   );
 }
 
-function SavedSection({ icon: Icon, title, color, children }: {
-  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
-  title: string;
-  color: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="rounded-xl" style={{ background: '#fff', border: '1px solid #D9D9D6' }}>
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3.5 py-2.5">
-        <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5" style={{ color }} />
-          <span className="text-xs font-bold" style={{ color: '#0F253B' }}>{title}</span>
-        </div>
-        {open ? <ChevronUp className="w-3.5 h-3.5" style={{ color: '#96A3AD' }} /> : <ChevronDown className="w-3.5 h-3.5" style={{ color: '#96A3AD' }} />}
-      </button>
-      {open && <div className="px-3.5 pb-3.5">{children}</div>}
-    </div>
-  );
-}
+

@@ -13,8 +13,8 @@ function optional(name: string): string | undefined {
 }
 
 export const env = {
-  appId: required("APP_ID"),
-  appSecret: required("APP_SECRET"),
+  appId: optional("APP_ID"),
+  appSecret: optional("APP_SECRET"),
   isProduction: process.env.NODE_ENV === "production",
   databaseUrl: required("DATABASE_URL"),
   // AI configuration

@@ -2,11 +2,23 @@ import { useState, useCallback, useEffect } from 'react';
 import CalendarSection from '@/sections/CalendarSection';
 import { trpc } from '@/providers/trpc';
 import type { MarketEvent, MeetingLink, ExtractedScheduleInfo } from '@/types';
+import { seedEvents } from '@/data/seedEvents';
 
 const LS_KEY = 'market_events_v2';
+const SEED_LOADED_KEY = 'market_events_seed_loaded';
 
 function lsLoad(): MarketEvent[] {
-  try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+  try {
+    const r = localStorage.getItem(LS_KEY);
+    if (r) return JSON.parse(r);
+    // If no local data, load seed events as default
+    const seedLoaded = localStorage.getItem(SEED_LOADED_KEY);
+    if (!seedLoaded) {
+      localStorage.setItem(SEED_LOADED_KEY, 'true');
+      localStorage.setItem(LS_KEY, JSON.stringify(seedEvents));
+    }
+    return seedEvents;
+  } catch { return seedEvents; }
 }
 function lsSave(v: MarketEvent[]) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch { /* noop */ }

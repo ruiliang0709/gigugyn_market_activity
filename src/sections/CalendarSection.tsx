@@ -279,9 +279,9 @@ export default function CalendarSection({
                         const cfg = SCALE_CONFIG[evt.scale];
                         return (
                           <button key={evt.id} onClick={(e) => { e.stopPropagation(); setSelectedEvent(evt); }}
-                            className="w-full text-left px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] lg:text-xs font-semibold truncate block"
+                            className="w-full text-left px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] lg:text-xs font-semibold block"
                             style={{ background: cfg.bgColor, color: cfg.color, borderLeft: `3px solid ${cfg.color}` }}>
-                            <span className="truncate block">{evt.tumorType} · {evt.title}</span>
+                            <span className="block leading-tight" style={{ wordBreak: 'break-all', overflowWrap: 'break-word' }}>{evt.tumorType} · {evt.title}</span>
                           </button>
                         );
                       })}

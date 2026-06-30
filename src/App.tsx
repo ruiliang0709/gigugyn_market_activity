@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import CalendarSection from '@/sections/CalendarSection';
 import { trpc } from '@/providers/trpc';
-import type { MarketEvent, MeetingLink, ExtractedScheduleInfo } from '@/types';
+import type { MarketEvent, MeetingLink } from '@/types';
 import { seedEvents } from '@/data/seedEvents';
 
 const LS_KEY = 'market_events_v2';
@@ -171,78 +171,6 @@ function App() {
     setHasChanges(true);
   }, []);
 
-  // ---- Merged AI result update ----
-  const handleUpdateAIResult = useCallback((eventId: string, newLinks: MeetingLink[], newSpeakers: string[], extractedInfo: ExtractedScheduleInfo, scheduleImage?: string) => {
-    const base = pendingEvents !== null ? pendingEvents : localEvents;
-    const updated = base.map(e => {
-      if (e.id !== eventId) return e;
-      const existingSpeakers = new Set(e.speakers || []);
-      const mergedSpeakers = [...(e.speakers || [])];
-      for (const name of newSpeakers) {
-        if (!existingSpeakers.has(name)) mergedSpeakers.push(name);
-      }
-      const existingUrls = new Set((e.links || []).map(l => l.url));
-      const mergedLinks = [...(e.links || [])];
-      for (const link of newLinks) {
-        if (!existingUrls.has(link.url)) mergedLinks.push(link);
-      }
-      return { ...e, speakers: mergedSpeakers, links: mergedLinks, scheduleText: '[图片识别]', scheduleImage, extractedInfo };
-    });
-    if (pendingEvents !== null) {
-      setPendingEvents(updated);
-    } else {
-      setLocalEvents(updated);
-    }
-    lsSave(updated);
-
-    if (pendingEvents === null) {
-      fetch('/api/events/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events: updated }),
-      }).then(r => r.json()).then(data => {
-        console.log('[saveEvents] Result:', data);
-        if (data.count > 0) utils.event.list.invalidate();
-      }).catch(err => console.error('[saveEvents] Error:', err));
-    }
-  }, [pendingEvents, localEvents, bulkCreate, utils]);
-
-  // ---- Clear AI recognition result ----
-  const handleClearAIResult = useCallback((eventId: string) => {
-    const base = pendingEvents !== null ? pendingEvents : localEvents;
-    const updated = base.map(e => {
-      if (e.id !== eventId) return e;
-      const cleanedLinks = (e.links || []).filter(l => !l.id.startsWith('link-ai-'));
-      const aiSpeakers = new Set([...(e.extractedInfo?.chairmen || []), ...(e.extractedInfo?.speakers || [])]);
-      const cleanedSpeakers = (e.speakers || []).filter(s => !aiSpeakers.has(s));
-      return {
-        ...e,
-        links: cleanedLinks,
-        speakers: cleanedSpeakers,
-        scheduleText: undefined,
-        scheduleImage: undefined,
-        extractedInfo: undefined,
-      };
-    });
-    if (pendingEvents !== null) {
-      setPendingEvents(updated);
-    } else {
-      setLocalEvents(updated);
-    }
-    lsSave(updated);
-
-    if (pendingEvents === null) {
-      fetch('/api/events/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events: updated }),
-      }).then(r => r.json()).then(data => {
-        console.log('[saveEvents] Result:', data);
-        if (data.count > 0) utils.event.list.invalidate();
-      }).catch(err => console.error('[saveEvents] Error:', err));
-    }
-  }, [pendingEvents, localEvents, bulkCreate, utils]);
-
   return (
     <div className="relative w-full min-h-screen" style={{ backgroundColor: '#FFFFFF' }}>
       <CalendarSection
@@ -254,8 +182,6 @@ function App() {
         onDeletePage={handleDeletePage}
         onDeleteAll={handleDeleteAll}
         onUpdateLinks={handleUpdateLinks}
-        onUpdateAIResult={handleUpdateAIResult}
-        onClearAIResult={handleClearAIResult}
         hasChanges={hasChanges}
       />
     </div>
